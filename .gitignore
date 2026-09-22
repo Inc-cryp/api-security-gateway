@@ -1,0 +1,16 @@
+# Build output
+/gatewayd
+/gatewayd.exe
+
+# Coverage artifacts
+coverage.out
+coverage.html
+
+# Local configuration and secrets
+/config.local.yaml
+*.secret.yaml
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
