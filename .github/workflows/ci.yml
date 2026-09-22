@@ -15,6 +15,9 @@ env:
   # declares rather than whatever happens to be newest.
   GO_VERSION: "1.25"
 
+# The action majors are the current Node 24 line: checkout v7, setup-go v7, and
+# upload-artifact v7 each declare `using: node24`, so no step runs on a runtime
+# GitHub has deprecated.
 jobs:
   format:
     name: Format
@@ -89,7 +92,10 @@ jobs:
           ./bin/gatewayd -config config.yaml &
           pid=$!
           for _ in $(seq 1 50); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8080/nowhere; then break; fi
+            # No -f here: /nowhere is unrouted and answers 404, which is still
+            # proof the listener is up. -f would treat that as a failure and the
+            # loop would never observe readiness.
+            if curl -s -o /dev/null http://127.0.0.1:8080/nowhere; then break; fi
             if ! kill -0 "$pid" 2>/dev/null; then
               echo "the gateway exited during startup"
               exit 1
