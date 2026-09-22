@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # Must be >= the go directive in go.mod. The module targets 1.25, and the
+  # stdlib-only promise is only meaningful if CI tests the toolchain the module
+  # declares rather than whatever happens to be newest.
+  GO_VERSION: "1.25"
+
+# The action majors are the current Node 24 line: checkout v7, setup-go v7, and
+# upload-artifact v7 each declare `using: node24`, so no step runs on a runtime
+# GitHub has deprecated.
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: gofmt
+        run: make fmt-check
+
+  dependencies:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # No setup-go here on purpose: this job reads files, and it should not
+      # depend on the toolchain being installable to prove the module has no
+      # dependencies.
+      - name: Standard library only
+        run: make deps-check
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: go vet
+        run: make vet
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Test with the race detector
+        run: make test-cover
+      - name: Upload the coverage profile
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
+          if-no-files-found: error
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Build the gateway
+        run: make build
+      - name: The binary must report the revision it was built from
+        run: ./bin/gatewayd -version
+      - name: The shipped example configuration must be valid
+        run: |
+          cp config.example.yaml config.yaml
+          ./bin/gatewayd -config config.yaml &
+          pid=$!
+          for _ in $(seq 1 50); do
+            # No -f here: /nowhere is unrouted and answers 404, which is still
+            # proof the listener is up. -f would treat that as a failure and the
+            # loop would never observe readiness.
+            if curl -s -o /dev/null http://127.0.0.1:8080/nowhere; then break; fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "the gateway exited during startup"
+              exit 1
+            fi
+            sleep 0.1
+          done
+          # /nowhere is unrouted, so 404 is the healthiest answer available:
+          # it proves the listener is up and the router answered.
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/nowhere)
+          kill -TERM "$pid"
+          wait "$pid"
+          test "$status" = "404" || { echo "unexpected status $status"; exit 1; }
+          echo "the example configuration served requests"
