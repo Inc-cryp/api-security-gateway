@@ -46,6 +46,36 @@ type rateLimitSpec struct {
 	burst int
 }
 
+// requestState is the one piece of per-request state that flows *upward*.
+//
+// Every stage below accessLog derives a new request with r.WithContext and
+// passes it down the chain, so a fact a stage records on its own context is
+// visible only to that stage's callees. accessLog has to report the request
+// id, the matched route and the authenticated principal after the chain
+// returns, so those stages write into a shared holder instead of relying on
+// context propagation back to the caller. The holder is per request and is
+// only ever touched by the goroutine serving it.
+type requestState struct {
+	requestID    string
+	route        *router.Route
+	clientIP     net.IP
+	principal    httpx.Identity
+	hasPrincipal bool
+}
+
+type stateKey struct{}
+
+func withState(ctx context.Context, state *requestState) context.Context {
+	return context.WithValue(ctx, stateKey{}, state)
+}
+
+// stateFrom returns the holder accessLog installed, or nil when a stage is
+// exercised directly by a test.
+func stateFrom(ctx context.Context) *requestState {
+	state, _ := ctx.Value(stateKey{}).(*requestState)
+	return state
+}
+
 // Options carries everything the gateway needs to serve traffic.
 type Options struct {
 	Config        config.Config
@@ -120,31 +150,42 @@ func (g *Gateway) recoverPanic(w http.ResponseWriter, r *http.Request) {
 // accessLog records the outcome of every request exactly once.
 func (g *Gateway) accessLog(w http.ResponseWriter, r *http.Request) {
 	recorder := httpx.NewRecorder(w)
+	// Operator-configured response headers are set here, before the chain
+	// runs, so they land on every response the gateway produces — including a
+	// rejection or a panic. Hardening headers such as X-Frame-Options or
+	// Content-Security-Policy protect the error page just as much as the
+	// success page, so they must not depend on the request reaching the
+	// upstream.
+	for name, value := range g.headers {
+		recorder.Header().Set(name, value)
+	}
 	started := time.Now()
-	g.requestID(recorder, r)
+	// The holder is installed before the first stage runs so every stage can
+	// write to it on the way down.
+	state := &requestState{}
+	g.requestID(recorder, r.WithContext(withState(r.Context(), state)))
 
 	status, err := httpx.StatusFrom(recorder), httpx.ErrorFrom(recorder)
-	route := routeFromContext(r.Context())
 
 	entry := logging.Record{
 		Method:    r.Method,
 		Path:      r.URL.Path,
 		Query:     r.URL.RawQuery,
 		UserAgent: r.UserAgent(),
-		RequestID: httpx.RequestID(r.Context()),
+		RequestID: state.requestID,
 		Status:    status,
 		Bytes:     recorder.Written(),
 		Duration:  time.Since(started),
 	}
-	if route != nil {
-		entry.Route = route.Path
-		entry.Service = route.Service
+	if state.route != nil {
+		entry.Route = state.route.Path
+		entry.Service = state.route.Service
 	}
-	if ip := httpx.ClientIP(r); ip != nil {
-		entry.ClientIP = ip.String()
+	if state.clientIP != nil {
+		entry.ClientIP = state.clientIP.String()
 	}
-	if principal, ok := httpx.PrincipalFrom(r.Context()); ok {
-		entry.Principal = principal.Scheme + ":" + principal.ClientID
+	if state.hasPrincipal {
+		entry.Principal = state.principal.Scheme + ":" + state.principal.ClientID
 	}
 	if err != nil {
 		entry.Error = err.Error()
@@ -161,6 +202,9 @@ func (g *Gateway) requestID(w http.ResponseWriter, r *http.Request) {
 		id = sanitizeHeaderValue(id)
 	}
 	w.Header().Set(httpx.RequestIDHeader, id)
+	if state := stateFrom(r.Context()); state != nil {
+		state.requestID = id
+	}
 	g.ipFilter(w, r.WithContext(httpx.WithRequestID(r.Context(), id)))
 }
 
@@ -171,6 +215,9 @@ func (g *Gateway) requestID(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) ipFilter(w http.ResponseWriter, r *http.Request) {
 	ip := g.clientIP.ClientIP(r)
 	r = r.WithContext(httpx.WithClientIP(r.Context(), ip))
+	if state := stateFrom(r.Context()); state != nil {
+		state.clientIP = ip
+	}
 
 	route := g.router.Match(r.URL.Path)
 	if route == nil {
@@ -179,6 +226,9 @@ func (g *Gateway) ipFilter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(withRoute(r.Context(), route))
+	if state := stateFrom(r.Context()); state != nil {
+		state.route = route
+	}
 
 	if !route.AllowsIP(ip) {
 		httpx.WriteError(w, g.logger.Slog(), http.StatusForbidden, httpx.CodeForbidden, "client address is not permitted")
@@ -244,6 +294,10 @@ func (g *Gateway) authenticate(w http.ResponseWriter, r *http.Request, route *ro
 		httpx.RecordError(w, err)
 		return
 	}
+	if state := stateFrom(r.Context()); state != nil {
+		state.principal = principal
+		state.hasPrincipal = true
+	}
 	g.proxyRequest(w, r.WithContext(httpx.WithPrincipal(r.Context(), principal)), route)
 }
 
@@ -255,12 +309,6 @@ func (g *Gateway) proxyRequest(w http.ResponseWriter, r *http.Request, route *ro
 	}
 	if status > 0 {
 		httpx.RecordStatus(w, status)
-	}
-	for name, value := range g.headers {
-		// Response headers are set after the body in the happy path, so this
-		// only lands when the upstream response is still being composed; the
-		// Recorder makes it visible either way.
-		w.Header().Set(name, value)
 	}
 }
 

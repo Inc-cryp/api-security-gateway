@@ -178,7 +178,6 @@ security:
 logging:
   level: debug
   redact_query: true
-  redact_headers: [Authorization, Cookie]
 headers:
   X-Gateway: api-security-gateway
 `
@@ -247,9 +246,6 @@ headers:
 
 	if cfg.Logging.Level != "debug" || !cfg.Logging.RedactQuery {
 		t.Fatalf("Logging = %+v, want the decoded values", cfg.Logging)
-	}
-	if len(cfg.Logging.RedactHeaders) != 2 {
-		t.Fatalf("RedactHeaders = %v, want two entries", cfg.Logging.RedactHeaders)
 	}
 	if cfg.Headers["X-Gateway"] != "api-security-gateway" {
 		t.Fatalf("Headers = %v, want the configured header", cfg.Headers)

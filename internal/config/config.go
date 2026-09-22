@@ -42,7 +42,11 @@ type Config struct {
 	Upstreams map[string]string `yaml:"upstreams"`
 	Upstream  Upstream          `yaml:"upstream"`
 	Logging   Logging           `yaml:"logging"`
-	Headers   map[string]string `yaml:"headers"`
+	// Headers are added to every response the gateway produces, including
+	// rejections. They are meant for hardening headers (X-Frame-Options,
+	// Content-Security-Policy, Strict-Transport-Security) that must protect an
+	// error page as much as a success page.
+	Headers map[string]string `yaml:"headers"`
 }
 
 // Server holds listener settings.
@@ -129,11 +133,12 @@ type Upstream struct {
 	CircuitBreaker  CircuitBreaker `yaml:"circuit_breaker"`
 }
 
-// Logging configures the access log.
+// Logging configures the access log. The log records a fixed set of fields
+// and never a request header, so credentials cannot reach it by construction
+// and there is no header list to configure here.
 type Logging struct {
-	Level         string   `yaml:"level"`
-	RedactQuery   bool     `yaml:"redact_query"`
-	RedactHeaders []string `yaml:"redact_headers"`
+	Level       string `yaml:"level"`
+	RedactQuery bool   `yaml:"redact_query"`
 }
 
 // Defaults returns the configuration used for any field the file leaves unset.

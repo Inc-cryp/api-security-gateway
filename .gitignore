@@ -5,10 +5,15 @@
 # Coverage artifacts
 coverage.out
 coverage.html
+coverage.*
 
-# Local configuration and secrets
+# Local configuration and secrets. The README tells an operator to copy
+# config.example.yaml to config.yaml and fill in real credentials, so that
+# working copy must never be committable. Only the example is tracked.
+/config.yaml
 /config.local.yaml
 *.secret.yaml
+/bin/
 
 # Editor / OS noise
 .DS_Store

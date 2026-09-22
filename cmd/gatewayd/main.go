@@ -52,9 +52,8 @@ func run() error {
 		return err
 	}
 	logger, err := logging.New(logging.Options{
-		Level:         cfg.Logging.Level,
-		RedactQuery:   cfg.Logging.RedactQuery,
-		RedactHeaders: cfg.Logging.RedactHeaders,
+		Level:       cfg.Logging.Level,
+		RedactQuery: cfg.Logging.RedactQuery,
 	})
 	if err != nil {
 		return err
@@ -259,8 +258,14 @@ func newRoutes(cfg config.Config) ([]*router.Route, error) {
 			Methods:        route.Methods,
 			StripPrefix:    route.StripPrefix,
 			Timeout:        timeout,
-			AllowedIPs:     route.AllowedIPs,
-			DeniedIPs:      route.DeniedIPs,
+			// The rate-limit pair has to survive this copy: middleware.New
+			// builds one limiter per route that sets rate_limit, so dropping
+			// it here leaves every route unlimited no matter what the file
+			// says.
+			RateLimit:  route.RateLimit,
+			RateBurst:  route.RateBurst,
+			AllowedIPs: route.AllowedIPs,
+			DeniedIPs:  route.DeniedIPs,
 		})
 	}
 	return routes, nil

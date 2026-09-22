@@ -228,6 +228,15 @@ func stripHopByHop(header http.Header) {
 
 // transportFailure maps a client error onto a gateway response.
 func transportFailure(err error, service string, timeout time.Duration, elapsed time.Duration) (int, string, string) {
+	// An oversized upload fails while the body is streamed to the upstream, so
+	// it arrives here as a transport error rather than from the body-limit
+	// stage. It is the caller's fault and no upstream was ever reached, so
+	// blaming the upstream would misreport both the cause and the fix.
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge,
+			fmt.Sprintf("request body exceeds the %d byte limit", tooLarge.Limit)
+	}
 	if errors.Is(err, context.DeadlineExceeded) || isTimeout(err) {
 		return http.StatusGatewayTimeout, httpx.CodeTimeout,
 			fmt.Sprintf("upstream %q did not respond within %s", service, timeout)

@@ -177,7 +177,15 @@ func NewRegistry(cfg Config) *Registry {
 }
 
 // Get returns the breaker for name, creating it on first use.
+//
+// A nil *Registry disables the breaker entirely and returns a breaker that
+// is permanently closed, which is what a caller gets when it does not
+// configure one. Without this guard the first request through an
+// unconfigured gateway would panic on the map assignment.
 func (r *Registry) Get(name string) *Breaker {
+	if r == nil {
+		return New(Config{})
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if b, ok := r.breakers[name]; ok {

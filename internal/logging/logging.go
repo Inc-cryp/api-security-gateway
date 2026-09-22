@@ -4,8 +4,8 @@ package logging
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -23,37 +23,32 @@ type Options struct {
 	// RedactQuery replaces the query string with a marker, so credentials
 	// passed as query parameters never reach the log.
 	RedactQuery bool
-	// RedactHeaders lists headers whose values are replaced by a marker.
-	RedactHeaders []string
 }
 
 // Logger writes one structured line per request.
 type Logger struct {
-	log           *slog.Logger
-	redactQuery   bool
-	redactHeaders map[string]bool
+	log         *slog.Logger
+	redactQuery bool
 }
 
 // New builds a Logger writing JSON to stderr.
 func New(opts Options) (*Logger, error) {
+	return NewWriter(os.Stderr, opts)
+}
+
+// NewWriter builds a Logger writing JSON to w. It exists so a deployment can
+// divert the access log without touching the request path, and so tests can
+// assert on what was recorded.
+func NewWriter(w io.Writer, opts Options) (*Logger, error) {
 	level, err := parseLevel(opts.Level)
 	if err != nil {
 		return nil, err
 	}
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
-	redact := make(map[string]bool, len(opts.RedactHeaders))
-	for _, name := range opts.RedactHeaders {
-		redact[http.CanonicalHeaderKey(strings.TrimSpace(name))] = true
-	}
-	// A caller's credentials must never be logged, whether or not the
-	// operator remembered to list them.
-	for _, name := range []string{
-		"Authorization", httpx.RequestIDHeader, "X-Api-Key",
-		"X-Signature", "X-Client-Id", "Cookie", "Set-Cookie", "Proxy-Authorization",
-	} {
-		redact[name] = true
-	}
-	return &Logger{log: slog.New(handler), redactQuery: opts.RedactQuery, redactHeaders: redact}, nil
+	handler := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
+	// The access log records a fixed set of fields and never a request header,
+	// so there is no header list to redact here: a caller's Authorization or
+	// X-Api-Key cannot reach the log by construction.
+	return &Logger{log: slog.New(handler), redactQuery: opts.RedactQuery}, nil
 }
 
 // Slog exposes the underlying logger for start-up and error messages.
