@@ -274,6 +274,7 @@ tanda tangan.
 ```sh
 make test        # go test -race -count=1 ./...
 make test-cover  # sama, plus ringkasan cakupan
+make e2e         # uji asap end-to-end terhadap biner hasil build
 make vet
 make fmt-check   # gagal bila ada berkas yang tidak gofmt-clean
 make build
@@ -285,8 +286,7 @@ Cakupan pengujian saat ini:
 | Paket | Cakupan |
 | --- | --- |
 | `internal/logging` | 100.0% |
-| `internal/httpx` | 97.7% |
-| `internal/proxy` | 97.2% |
+| `internal/proxy` | 97.3% |
 | `internal/middleware` | 96.5% |
 | `internal/ratelimit` | 95.7% |
 | `internal/ipfilter` | 94.1% |
@@ -296,11 +296,14 @@ Cakupan pengujian saat ini:
 | `internal/router` | 92.2% |
 | `cmd/gatewayd` | 63.9% |
 
-Selain itu ada uji asap *end-to-end* yang menjalankan biner hasil `make build`
-terhadap empat layanan hulu tiruan: 46 pemeriksaan mencakup ketiga skema
-autentikasi, penolakan tanda tangan dan timestamp, batas ukuran badan, batas
-laju, penolakan IP, timeout rute, membuka dan menutupnya kembali circuit breaker,
-serta redaksi query pada log.
+Selain itu ada uji asap *end-to-end* di `test/e2e/gateway_e2e.py` yang
+dijalankan lewat `make e2e`. Skrip itu menyalakan empat layanan hulu tiruan,
+mengarahkan biner hasil `make build` ke sana, lalu mengirim permintaan
+sungguhan lewat TCP: 46 pemeriksaan mencakup ketiga skema autentikasi,
+penolakan tanda tangan dan timestamp, batas ukuran badan, batas laju,
+penolakan IP, timeout rute, membuka dan menutupnya kembali circuit breaker,
+serta redaksi query pada log. Uji ini sengaja tidak ikut `make test` supaya
+rangkaian uji Go tetap hermetis.
 
 ## Lisensi
 

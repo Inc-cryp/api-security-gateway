@@ -4,7 +4,7 @@ PKG     ?= ./...
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: all build run test test-cover vet fmt fmt-check deps-check tidy clean help
+.PHONY: all build run test test-cover e2e vet fmt fmt-check deps-check tidy clean help
 
 all: fmt-check vet test build
 
@@ -24,6 +24,11 @@ test:
 test-cover:
 	$(GO) test -race -count=1 -coverprofile=coverage.out $(PKG)
 	$(GO) tool cover -func=coverage.out | tail -1
+
+## e2e: run the end-to-end smoke test against the built binary
+e2e: build
+	@command -v python3 >/dev/null || { echo "python3 is required"; exit 1; }
+	python3 test/e2e/gateway_e2e.py
 
 ## vet: run go vet
 vet:
